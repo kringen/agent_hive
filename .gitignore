@@ -8,6 +8,12 @@
 *.so
 *.dylib
 
+# Compiled service binaries from plain `go build` (no extension on Linux/macOS)
+/agent-platform/router/router
+/agent-platform/router/cmd/router/router
+/agent-platform/dashboard-api/dashboard-api
+/agent-platform/dashboard-api/cmd/dashboard-api/dashboard-api
+
 # Test binary, built with `go test -c`
 *.test
 

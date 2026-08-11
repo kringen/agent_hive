@@ -1,0 +1,37 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - errcheck
+    - ineffassign
+    - gosec
+    - bodyclose
+    - unconvert
+    - unparam
+  settings:
+    errcheck:
+      # Ignoring errors from these is an accepted, deliberate pattern in
+      # this codebase (best-effort JSON marshal/publish, etc.) — don't
+      # force-check every single one, but do keep the linter otherwise
+      # strict everywhere else.
+      exclude-functions:
+        - encoding/json.Marshal
+        - (*encoding/json.Encoder).Encode
+
+exclusions:
+  rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+
+formatters:
+  enable:
+    - gofmt

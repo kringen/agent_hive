@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [router, dashboard-api]
+    defaults:
+      run:
+        working-directory: agent-platform/${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: agent-platform/${{ matrix.module }}/go.sum
+
+      - name: Verify go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v2.1.6
+          working-directory: agent-platform/${{ matrix.module }}
+          args: --config=${{ github.workspace }}/.golangci.yml
+
+      - name: gofmt check
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "The following files are not gofmt'ed:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./... -race -v

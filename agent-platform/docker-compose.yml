@@ -1,0 +1,136 @@
+version: "3.9"
+
+services:
+
+  # 3-node NATS JetStream cluster for HA. Each node shares the same
+  # cluster route config (./nats/nats-server.conf) and gets a distinct
+  # --name (server_name) and its own JetStream storage volume so no node
+  # is a single point of failure — losing one node keeps the stream
+  # available as long as a quorum (2/3) of nodes are up, and clients
+  # connect with all three seed URLs for automatic failover.
+  #
+  # Monitor cluster health at http://localhost:8222/varz (and 8223/8224
+  # for the other two nodes) or `docker compose exec nats-1 nats-server --signal ...`.
+  nats-1:
+    image: nats:latest
+    command: ["--config", "/etc/nats/nats-server.conf", "--name", "nats-1"]
+    volumes:
+      - ./nats/nats-server.conf:/etc/nats/nats-server.conf:ro,Z
+      - nats1_data:/data/jetstream
+    ports:
+      - "4222:4222"   # client connections (primary, for host-side tools)
+      - "8222:8222"   # HTTP monitoring, http://localhost:8222/varz
+
+  nats-2:
+    image: nats:latest
+    command: ["--config", "/etc/nats/nats-server.conf", "--name", "nats-2"]
+    volumes:
+      - ./nats/nats-server.conf:/etc/nats/nats-server.conf:ro,Z
+      - nats2_data:/data/jetstream
+    ports:
+      - "4223:4222"
+      - "8223:8222"
+
+  nats-3:
+    image: nats:latest
+    command: ["--config", "/etc/nats/nats-server.conf", "--name", "nats-3"]
+    volumes:
+      - ./nats/nats-server.conf:/etc/nats/nats-server.conf:ro,Z
+      - nats3_data:/data/jetstream
+    ports:
+      - "4224:4222"
+      - "8224:8222"
+
+  # Local Ollama for testing without your kringai box. Point OLLAMA_HOST
+  # at kringai instead if you'd rather test against your real GPU/models —
+  # just delete this service and set OLLAMA_HOST in router's environment.
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  # Go service — see router/go.mod. Run `go mod tidy` inside ./router once
+  # (needs real internet access to the Go module proxy) to generate go.sum
+  # before the first `docker compose build` — the multi-stage Dockerfile's
+  # `go mod download` step needs it.
+  router:
+    build: ./router
+    depends_on:
+      - nats-1
+      - nats-2
+      - nats-3
+      - ollama
+    environment:
+      # Comma-separated seed list — nats.go tries each in turn and
+      # reconnects to any surviving node if the one it's on goes down.
+      NATS_URL: "nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222"
+      OLLAMA_HOST: "http://ollama:11434"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-gemma2:9b}"
+      CLAUDE_MODEL: "${CLAUDE_MODEL:-claude-sonnet-4-6}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+      MONTHLY_BUDGET_USD: "${MONTHLY_BUDGET_USD:-30}"
+      HEALTH_PORT: "8080"
+    healthcheck:
+      test: ["CMD", "/healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    volumes:
+      - router_data:/data
+
+  # Also Go — same go.sum step applies in ./dashboard-api.
+  dashboard-api:
+    build: ./dashboard-api
+    depends_on:
+      - nats-1
+      - nats-2
+      - nats-3
+    environment:
+      NATS_URL: "nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222"
+      APPROVAL_DB_PATH: "/data/approvals.db"
+    healthcheck:
+      test: ["CMD", "/healthcheck"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    ports:
+      - "8000:8000"   # handy for hitting the API directly while testing
+    volumes:
+      - dashboard_data:/data
+
+  dashboard-frontend:
+    build: ./dashboard-frontend
+    depends_on:
+      - dashboard-api
+    ports:
+      - "8080:80"
+
+  # Not always-on — this is a CronJob in K8s, so here it's opt-in via
+  # a compose profile. Run it on demand with:
+  #   docker compose --profile agents run --rm email-agent
+  email-agent:
+    build: ./agents
+    profiles: ["agents"]
+    depends_on:
+      - nats-1
+      - nats-2
+      - nats-3
+      - dashboard-api
+    environment:
+      NATS_URL: "nats://nats-1:4222,nats://nats-2:4222,nats://nats-3:4222"
+      APPROVAL_API: "http://dashboard-api:8000"
+      GMAIL_REFRESH_TOKEN: "${GMAIL_REFRESH_TOKEN}"
+      GMAIL_CLIENT_ID: "${GMAIL_CLIENT_ID}"
+      GMAIL_CLIENT_SECRET: "${GMAIL_CLIENT_SECRET}"
+
+volumes:
+  ollama_data:
+  router_data:
+  dashboard_data:
+  nats1_data:
+  nats2_data:
+  nats3_data:
