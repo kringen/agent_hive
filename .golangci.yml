@@ -24,13 +24,12 @@ linters:
       exclude-functions:
         - encoding/json.Marshal
         - (*encoding/json.Encoder).Encode
-
-exclusions:
-  rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
 
 formatters:
   enable:
