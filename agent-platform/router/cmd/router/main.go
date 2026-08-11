@@ -247,31 +247,55 @@ func main() {
 		log.Fatalf("failed to init jetstream: %v", err)
 	}
 
-	ctx := context.Background()
-	stream, err := js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
-		Name:     "AGENT_TASKS",
-		Subjects: []string{"agent.tasks.>"},
-		// 3-way replication across the NATS cluster — the stream survives
-		// the loss of any single node as long as a quorum (2/3) is up.
-		Replicas: 3,
-	})
-	if err != nil {
-		log.Fatalf("failed to create stream: %v", err)
+	// Creating an R3 stream requires the NATS cluster to have a quorum
+	// available to elect a Raft leader for it. depends_on only waits for
+	// containers to start, not for the cluster to actually be ready, so
+	// retry with backoff instead of crash-looping on a transient timeout
+	// during cluster startup.
+	var stream jetstream.Stream
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		stream, err = js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+			Name:     "AGENT_TASKS",
+			Subjects: []string{"agent.tasks.>"},
+			// 3-way replication across the NATS cluster — the stream survives
+			// the loss of any single node as long as a quorum (2/3) is up.
+			Replicas: 3,
+		})
+		cancel()
+		if err == nil {
+			break
+		}
+		if attempt >= 10 {
+			log.Fatalf("failed to create stream after %d attempts: %v", attempt, err)
+		}
+		log.Printf("stream creation attempt %d failed (%v), retrying...", attempt, err)
+		time.Sleep(time.Duration(attempt) * 2 * time.Second)
 	}
 
-	consumer, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable: "router",
-		// Explicit ack so a crashed/killed router redelivers in-flight
-		// tasks instead of silently losing them.
-		AckPolicy: jetstream.AckExplicitPolicy,
-		AckWait:   30 * time.Second,
-		// Give up after a few attempts and dead-letter rather than
-		// retrying a poison message forever.
-		MaxDeliver: maxDeliverAttempts,
-		BackOff:    []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second},
-	})
-	if err != nil {
-		log.Fatalf("failed to create consumer: %v", err)
+	var consumer jetstream.Consumer
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		consumer, err = stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
+			Durable: "router",
+			// Explicit ack so a crashed/killed router redelivers in-flight
+			// tasks instead of silently losing them.
+			AckPolicy: jetstream.AckExplicitPolicy,
+			AckWait:   30 * time.Second,
+			// Give up after a few attempts and dead-letter rather than
+			// retrying a poison message forever.
+			MaxDeliver: maxDeliverAttempts,
+			BackOff:    []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second},
+		})
+		cancel()
+		if err == nil {
+			break
+		}
+		if attempt >= 10 {
+			log.Fatalf("failed to create consumer after %d attempts: %v", attempt, err)
+		}
+		log.Printf("consumer creation attempt %d failed (%v), retrying...", attempt, err)
+		time.Sleep(time.Duration(attempt) * 2 * time.Second)
 	}
 
 	healthSrv.MarkReady()

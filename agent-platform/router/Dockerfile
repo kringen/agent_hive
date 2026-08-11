@@ -7,9 +7,15 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/router ./cmd/router
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/healthcheck ./cmd/healthcheck
 
-# Runtime stage — distroless, no shell, no package manager.
-# Static binary means this image is tens of MB, not hundreds.
-FROM gcr.io/distroless/static-debian12
+# Runtime stage — Alpine instead of distroless: podman's --health-cmd
+# always executes via `/bin/sh -c`, even for exec-form HEALTHCHECK
+# directives (unlike Docker, which supports true shell-less exec form).
+# A fully shell-less image like distroless/static means podman can never
+# invoke the healthcheck at all. Alpine keeps the image small (~5MB base)
+# while providing the shell podman needs, and our binaries are already
+# static (CGO_ENABLED=0) so musl vs glibc doesn't matter.
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/router /router
 COPY --from=builder /out/healthcheck /healthcheck
 VOLUME /data

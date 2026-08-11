@@ -43,13 +43,13 @@ run-router:
 run-dashboard-api:
 	cd $(DASHBOARD_API_DIR) && go run ./cmd/dashboard-api
 
-## compose-up: start the full stack via docker compose
+## compose-up: start the full stack via podman compose
 compose-up:
-	cd agent-platform && docker compose up --build
+	cd agent-platform && podman compose up --build
 
 ## compose-down: stop the full stack
 compose-down:
-	cd agent-platform && docker compose down
+	cd agent-platform && podman compose down
 
 ## clean: remove stray local build binaries
 clean:
